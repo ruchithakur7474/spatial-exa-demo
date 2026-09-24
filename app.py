@@ -114,7 +114,7 @@ if uploaded_file is not None:
     
     # Pre-compute Metrics & Visualizations
     is_attack = (attack_type != "Benign (Bona Fide)")
-    confidence = np.random.uniform(95.4, 99.1) if is_attack else np.random.uniform(98.5, 99.8)
+    confidence = float(np.random.uniform(95.4, 99.1) if is_attack else np.random.uniform(98.5, 99.8))
     
     heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap), cv2.COLORMAP_JET)
     heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
