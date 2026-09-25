@@ -70,7 +70,8 @@ class SpatialEXAModel(nn.Module):
         anomaly_map = F.interpolate(anomaly_map, size=(x.size(2), x.size(3)), mode='bilinear', align_corners=False)
         return logits, anomaly_map, fused_feat
 
-# ==========================================\n# 2. HELPER SIMULATION & XAI ENGINE
+# ==========================================
+# 2. HELPER SIMULATION & XAI ENGIN
 # ==========================================
 
 CLASSES = ["Benign (Real)", "FGSM Attack", "PGD Attack", "Carlini-Wagner (CW)", "Physical Patch", "Generative Deepfake"]
