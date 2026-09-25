@@ -683,10 +683,8 @@ time.sleep(2)
 
 print("\n🚀 Starting Streamlit on port 8503...")
 
-streamlit_log = open(
-    "/content/streamlit.log",
-    "w"
-)
+
+
 
 streamlit_cmd = (
     f"streamlit run {APP_PATH} "
