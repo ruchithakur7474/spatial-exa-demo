@@ -653,13 +653,6 @@ st.caption(
 
 APP_PATH = "/content/exa_guard_app.py"
 
-with open(
-    APP_PATH,
-    "w",
-    encoding="utf-8"
-) as f:
-
-    f.write(APP_CODE)
 
 print("✅ App file created:")
 print(APP_PATH)
