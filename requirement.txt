@@ -1,7 +1,7 @@
-streamlit
-numpy
-opencv-python-headless
-pillow
-matplotlib
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
 torchvision
+streamlit
+pillow
+numpy
+matplotlib
