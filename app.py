@@ -143,7 +143,9 @@ def calculate_deletion_insertion_curves(heatmap, initial_confidence):
 
     return percentiles, deletion_curve, insertion_curve, deletion_auc, insertion_auc
 
-# ==========================================\n# 3. STREAMLIT INTERACTIVE DASHBOARD\n# ==========================================
+# ==========================================
+# 3. STREAMLIT INTERACTIVE DASHBOARD
+# ==========================================
 
 def main():
     st.set_page_config(page_title="Spatial-EXA Defense Studio", page_icon="🛡️", layout="wide")
