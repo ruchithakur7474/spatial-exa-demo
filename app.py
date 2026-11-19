@@ -1,5 +1,5 @@
 # ============================================================
-# EXA-GUARD
+#👤 EXA-GUARD
 # Explainable Adversarial Analytics for Facial Biometrics
 # ============================================================
 
