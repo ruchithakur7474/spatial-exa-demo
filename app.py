@@ -1,12 +1,11 @@
 # ============================================================
-# EXA-GUARD: Explainable Adversarial Analytics
-# Streamlit Application
+# EXA-GUARD
+# Explainable Adversarial Analytics for Facial Biometrics
 # ============================================================
 
 import os
-import io
 import traceback
-import warnings
+from pathlib import Path
 
 import streamlit as st
 import numpy as np
@@ -15,7 +14,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from PIL import Image
-
 from torchvision import transforms
 from torchvision.models import resnet18
 
@@ -27,14 +25,16 @@ from torchvision.models import resnet18
 st.set_page_config(
     page_title="EXA-Guard",
     page_icon="🔍",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+BASE_DIR = Path(__file__).resolve().parent
 
 IMAGE_SIZE = 112
-
 NUM_CLASSES = 200
 
 FGSM_EPSILON = 8 / 255
@@ -45,13 +45,13 @@ PGD_STEPS = 10
 
 PATCH_SIZE = 20
 
-VICTIM_CHECKPOINT = "victim_model_fp16.pth"
+VICTIM_CHECKPOINT = BASE_DIR / "victim_model_fp16.pth"
 
-EXA_CHECKPOINT = "exa_guard_model.pth"
+EXA_CHECKPOINT = BASE_DIR / "exa_guard_model.pth"
 
 
 # ============================================================
-# 2. CUSTOM CSS
+# 2. CSS
 # ============================================================
 
 st.markdown(
@@ -59,31 +59,24 @@ st.markdown(
     <style>
 
     .main-title {
-        font-size: 35px;
+        font-size: 36px;
         font-weight: 800;
-        color: #2563eb;
         text-align: center;
+        color: #2563eb;
     }
 
     .subtitle {
         text-align: center;
-        font-size: 16px;
         color: #64748b;
+        font-size: 16px;
         margin-bottom: 25px;
     }
 
     .section-title {
-        font-size: 22px;
-        font-weight: 700;
+        font-size: 23px;
+        font-weight: bold;
         margin-top: 20px;
         margin-bottom: 10px;
-    }
-
-    .info-box {
-        background-color: #f1f5f9;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #2563eb;
     }
 
     </style>
@@ -93,7 +86,7 @@ st.markdown(
 
 
 # ============================================================
-# 3. IMAGE TRANSFORMATION
+# 3. TRANSFORM
 # ============================================================
 
 transform = transforms.Compose([
@@ -134,19 +127,6 @@ def tensor_to_image(tensor):
     return Image.fromarray(image)
 
 
-def tensor_to_numpy(tensor):
-
-    tensor = tensor.detach().cpu()
-
-    tensor = tensor.squeeze(0)
-
-    tensor = tensor * 0.5 + 0.5
-
-    tensor = torch.clamp(tensor, 0, 1)
-
-    return tensor.permute(1, 2, 0).numpy()
-
-
 # ============================================================
 # 4. VICTIM MODEL
 # ============================================================
@@ -157,7 +137,9 @@ class VictimModel(nn.Module):
 
         super().__init__()
 
-        self.model = resnet18(weights=None)
+        self.model = resnet18(
+            weights=None
+        )
 
         self.model.fc = nn.Linear(
             self.model.fc.in_features,
@@ -171,6 +153,7 @@ class VictimModel(nn.Module):
 
 # ============================================================
 # 5. EXA-GUARD MODEL
+# MATCHES YOUR CHECKPOINT ARCHITECTURE
 # ============================================================
 
 class EXAGuardModel(nn.Module):
@@ -179,75 +162,108 @@ class EXAGuardModel(nn.Module):
 
         super().__init__()
 
+        # -----------------------------------------
         # Feature extraction
+        # -----------------------------------------
+
         self.features = nn.Sequential(
 
+            # Layer 0
             nn.Conv2d(
                 3, 32,
                 kernel_size=3,
                 padding=1
             ),
 
+            # Layer 1
             nn.BatchNorm2d(32),
 
+            # Layer 2
             nn.ReLU(inplace=True),
 
+            # Layer 3
             nn.MaxPool2d(2),
 
+            # Layer 4
             nn.Conv2d(
                 32, 64,
                 kernel_size=3,
                 padding=1
             ),
 
+            # Layer 5
             nn.BatchNorm2d(64),
 
+            # Layer 6
             nn.ReLU(inplace=True),
 
+            # Layer 7
             nn.MaxPool2d(2),
 
+            # Layer 8
             nn.Conv2d(
                 64, 128,
                 kernel_size=3,
                 padding=1
             ),
 
+            # Layer 9
             nn.BatchNorm2d(128),
 
+            # Layer 10
             nn.ReLU(inplace=True),
 
+            # Layer 11
+            nn.MaxPool2d(2),
+
+            # Layer 12
             nn.Conv2d(
                 128, 256,
                 kernel_size=3,
                 padding=1
             ),
 
+            # Layer 13
             nn.BatchNorm2d(256),
 
+            # Layer 14
             nn.ReLU(inplace=True)
         )
 
-        # Attack classification
-        self.attack_classifier = nn.Sequential(
+        # -----------------------------------------
+        # Attack detector
+        # -----------------------------------------
+
+        self.detector = nn.Sequential(
 
             nn.AdaptiveAvgPool2d(1),
 
             nn.Flatten(),
 
-            nn.Linear(256, 128),
+            nn.Linear(
+                256,
+                128
+            ),
 
             nn.ReLU(inplace=True),
 
             nn.Dropout(0.3),
 
-            nn.Linear(128, 2)
+            nn.Linear(
+                128,
+                1
+            )
         )
 
+        # -----------------------------------------
         # Spatial localization
-        self.localization_head = nn.Sequential(
+        # -----------------------------------------
+
+        self.localization = nn.Sequential(
 
             nn.Conv2d(
-                256, 128,
+                256,
+                64,
                 kernel_size=3,
                 padding=1
             ),
@@ -255,28 +271,31 @@ class EXAGuardModel(nn.Module):
             nn.ReLU(inplace=True),
 
             nn.Conv2d(
-                128, 64,
-                kernel_size=3,
-                padding=1
-            ),
-
-            nn.ReLU(inplace=True),
-
-            nn.Conv2d(
-                64, 1,
+                64,
+                1,
                 kernel_size=1
-            ),
-
-            nn.Sigmoid()
+            )
         )
 
     def forward(self, x):
 
         features = self.features(x)
 
-        attack_logits = self.attack_classifier(features)
+        # Attack classification
+        attack_logits = self.detector(features)
 
-        localization_map = self.localization_head(features)
+        attack_probability = torch.sigmoid(
+            attack_logits
+        )
+
+        # Spatial localization
+        localization_logits = self.localization(
+            features
+        )
+
+        localization_map = torch.sigmoid(
+            localization_logits
+        )
 
         localization_map = F.interpolate(
             localization_map,
@@ -285,18 +304,82 @@ class EXAGuardModel(nn.Module):
             align_corners=False
         )
 
-        return attack_logits, localization_map
+        return (
+            attack_probability,
+            localization_map
+        )
 
 
 # ============================================================
-# 6. CHECKPOINT LOADING
+# 6. CHECKPOINT LOADER
 # ============================================================
+
+def extract_state_dict(checkpoint):
+
+    if isinstance(checkpoint, dict):
+
+        if "state_dict" in checkpoint:
+
+            return checkpoint["state_dict"]
+
+        if "model_state_dict" in checkpoint:
+
+            return checkpoint["model_state_dict"]
+
+        if "model" in checkpoint:
+
+            model_object = checkpoint["model"]
+
+            if isinstance(model_object, nn.Module):
+
+                return model_object.state_dict()
+
+            return model_object
+
+        return checkpoint
+
+    if isinstance(checkpoint, nn.Module):
+
+        return checkpoint.state_dict()
+
+    raise TypeError(
+        "Unsupported checkpoint format."
+    )
+
+
+def clean_state_dict(state_dict):
+
+    cleaned = {}
+
+    for key, value in state_dict.items():
+
+        new_key = key
+
+        if new_key.startswith("module."):
+
+            new_key = new_key[len("module."):]
+
+        if new_key.startswith("model."):
+
+            new_key = new_key[len("model."):]
+
+        cleaned[new_key] = value
+
+    return cleaned
+
 
 def load_checkpoint(model, checkpoint_path):
 
-    if not os.path.exists(checkpoint_path):
+    checkpoint_path = Path(
+        checkpoint_path
+    )
 
-        return False, f"Checkpoint not found: {checkpoint_path}"
+    if not checkpoint_path.exists():
+
+        return False, (
+            f"Checkpoint not found:\n"
+            f"{checkpoint_path}"
+        )
 
     try:
 
@@ -306,51 +389,19 @@ def load_checkpoint(model, checkpoint_path):
             weights_only=False
         )
 
-        # Support different checkpoint formats
+        state_dict = extract_state_dict(
+            checkpoint
+        )
 
-        if isinstance(checkpoint, dict):
+        state_dict = clean_state_dict(
+            state_dict
+        )
 
-            if "state_dict" in checkpoint:
-
-                state_dict = checkpoint["state_dict"]
-
-            elif "model_state_dict" in checkpoint:
-
-                state_dict = checkpoint["model_state_dict"]
-
-            elif "model" in checkpoint:
-
-                state_dict = checkpoint["model"]
-
-            else:
-
-                state_dict = checkpoint
-
-        else:
-
-            state_dict = checkpoint
-
-        # Remove common prefixes
-
-        cleaned_state_dict = {}
-
-        for key, value in state_dict.items():
-
-            new_key = key
-
-            if new_key.startswith("module."):
-
-                new_key = new_key.replace(
-                    "module.",
-                    "",
-                    1
-                )
-
-            cleaned_state_dict[new_key] = value
+        # Strict loading for EXA-Guard architecture
 
         result = model.load_state_dict(
-            cleaned_state_dict,
-            strict=False
+            state_dict,
+            strict=True
         )
 
         model.to(DEVICE)
@@ -358,7 +409,7 @@ def load_checkpoint(model, checkpoint_path):
         model.eval()
 
         return True, (
-            f"Checkpoint loaded successfully.\n"
+            "Checkpoint loaded successfully.\n"
             f"Missing keys: {len(result.missing_keys)}\n"
             f"Unexpected keys: {len(result.unexpected_keys)}"
         )
@@ -369,14 +420,14 @@ def load_checkpoint(model, checkpoint_path):
 
 
 # ============================================================
-# 7. MODEL INITIALIZATION
+# 7. INITIALIZE MODELS
 # ============================================================
 
 @st.cache_resource
 def initialize_models():
 
     victim_model = VictimModel(
-        num_classes=NUM_CLASSES
+        NUM_CLASSES
     )
 
     exa_guard_model = EXAGuardModel()
@@ -420,7 +471,7 @@ def initialize_models():
 
 
 # ============================================================
-# 8. FGSM ATTACK
+# 8. FGSM
 # ============================================================
 
 def generate_fgsm_attack(image_tensor):
@@ -429,9 +480,13 @@ def generate_fgsm_attack(image_tensor):
 
     image_tensor.requires_grad = True
 
-    output = victim_model(image_tensor)
+    output = victim_model(
+        image_tensor
+    )
 
-    predicted_class = output.argmax(dim=1)
+    predicted_class = output.argmax(
+        dim=1
+    )
 
     loss = F.cross_entropy(
         output,
@@ -444,73 +499,75 @@ def generate_fgsm_attack(image_tensor):
 
     gradient = image_tensor.grad.data
 
-    perturbed_image = (
+    attacked_image = (
         image_tensor +
         FGSM_EPSILON * gradient.sign()
     )
 
-    perturbed_image = torch.clamp(
-        perturbed_image,
+    attacked_image = torch.clamp(
+        attacked_image,
         -1,
         1
     )
 
-    return perturbed_image.detach()
+    return attacked_image.detach()
 
 
 # ============================================================
-# 9. PGD ATTACK
+# 9. PGD
 # ============================================================
 
 def generate_pgd_attack(image_tensor):
 
     original_image = image_tensor.clone().detach()
 
-    perturbed_image = original_image.clone().detach()
+    attacked_image = original_image.clone().detach()
 
-    perturbed_image = perturbed_image + torch.empty_like(
-        perturbed_image
+    attacked_image += torch.empty_like(
+        attacked_image
     ).uniform_(
         -PGD_EPSILON,
         PGD_EPSILON
     )
 
-    perturbed_image = torch.clamp(
-        perturbed_image,
+    attacked_image = torch.clamp(
+        attacked_image,
         -1,
         1
     )
 
-    predicted_class = victim_model(
+    target_class = victim_model(
         original_image
-    ).argmax(dim=1)
+    ).argmax(
+        dim=1
+    )
 
-    for step in range(PGD_STEPS):
+    for _ in range(PGD_STEPS):
 
-        perturbed_image.requires_grad = True
+        attacked_image.requires_grad = True
 
         output = victim_model(
-            perturbed_image
+            attacked_image
         )
 
         loss = F.cross_entropy(
             output,
-            predicted_class
+            target_class
         )
 
         victim_model.zero_grad()
 
         loss.backward()
 
-        gradient = perturbed_image.grad.data
+        gradient = attacked_image.grad.data
 
-        perturbed_image = (
-            perturbed_image.detach() +
+        attacked_image = (
+            attacked_image.detach() +
             PGD_ALPHA * gradient.sign()
         )
 
         perturbation = (
-            perturbed_image -
+            attacked_image -
             original_image
         )
 
@@ -520,29 +577,29 @@ def generate_pgd_attack(image_tensor):
             PGD_EPSILON
         )
 
-        perturbed_image = (
+        attacked_image = (
             original_image +
             perturbation
         )
 
-        perturbed_image = torch.clamp(
-            perturbed_image,
+        attacked_image = torch.clamp(
+            attacked_image,
             -1,
             1
         )
 
-    return perturbed_image.detach()
+    return attacked_image.detach()
 
 
 # ============================================================
-# 10. SIMULATED PATCH ATTACK
+# 10. SIMULATED PATCH
 # ============================================================
 
 def generate_patch_attack(image_tensor):
 
-    image_tensor = image_tensor.clone().detach()
+    attacked_image = image_tensor.clone().detach()
 
-    _, _, height, width = image_tensor.shape
+    _, _, height, width = attacked_image.shape
 
     patch_size = min(
         PATCH_SIZE,
@@ -550,11 +607,13 @@ def generate_patch_attack(image_tensor):
         width
     )
 
-    start_x = (width - patch_size) // 2
+    start_x = (
+        width - patch_size
+    ) // 2
 
-    start_y = (height - patch_size) // 2
-
-    # Simulated fixed adversarial patch
+    start_y = (
+        height - patch_size
+    ) // 2
 
     patch = torch.zeros(
         1,
@@ -564,20 +623,20 @@ def generate_patch_attack(image_tensor):
         device=DEVICE
     )
 
-    patch[:, 0, :, :] = 1.0
+    patch[:, 0] = 1.0
 
-    patch[:, 1, :, :] = -1.0
+    patch[:, 1] = -1.0
 
-    patch[:, 2, :, :] = 1.0
+    patch[:, 2] = 1.0
 
-    image_tensor[
+    attacked_image[
         :,
         :,
         start_y:start_y + patch_size,
         start_x:start_x + patch_size
     ] = patch
 
-    return image_tensor.detach()
+    return attacked_image.detach()
 
 
 # ============================================================
@@ -590,31 +649,43 @@ def apply_attack(image_tensor, attack_name):
 
         return image_tensor.clone().detach()
 
-    elif attack_name == "FGSM":
+    if attack_name == "FGSM":
+
+        if not victim_status:
+
+            raise RuntimeError(
+                "Victim model checkpoint is unavailable. "
+                "FGSM cannot be generated."
+            )
 
         return generate_fgsm_attack(
             image_tensor
         )
 
-    elif attack_name == "PGD":
+    if attack_name == "PGD":
+
+        if not victim_status:
+
+            raise RuntimeError(
+                "Victim model checkpoint is unavailable. "
+                "PGD cannot be generated."
+            )
 
         return generate_pgd_attack(
             image_tensor
         )
 
-    elif attack_name == "Patch Attack":
+    if attack_name == "Patch Attack":
 
         return generate_patch_attack(
             image_tensor
         )
 
-    else:
-
-        return image_tensor.clone().detach()
+    return image_tensor.clone().detach()
 
 
 # ============================================================
-# 12. VICTIM MODEL PREDICTION
+# 12. VICTIM PREDICTION
 # ============================================================
 
 def get_victim_prediction(image_tensor):
@@ -636,8 +707,7 @@ def get_victim_prediction(image_tensor):
 
     return (
         predicted_class.item(),
-        confidence.item(),
-        probabilities
+        confidence.item()
     )
 
 
@@ -649,30 +719,25 @@ def get_exa_guard_prediction(image_tensor):
 
     with torch.no_grad():
 
-        attack_logits, localization_map = (
-            exa_guard_model(image_tensor)
+        attack_probability, localization_map = (
+            exa_guard_model(
+                image_tensor
+            )
         )
 
-        probabilities = F.softmax(
-            attack_logits,
-            dim=1
-        )
+    attack_probability = (
+        attack_probability.squeeze().item()
+    )
 
-        attack_probability = probabilities[
-            0, 1
-        ].item()
-
-        predicted_attack = probabilities.argmax(
-            dim=1
-        ).item()
-
-        localization_map = localization_map[
-            0, 0
-        ]
+    localization_map = (
+        localization_map.squeeze()
+        .detach()
+        .cpu()
+        .numpy()
+    )
 
     return (
         attack_probability,
-        predicted_attack,
         localization_map
     )
 
@@ -689,10 +754,7 @@ def normalize_heatmap(heatmap):
     )
 
     heatmap = np.nan_to_num(
-        heatmap,
-        nan=0.0,
-        posinf=0.0,
-        neginf=0.0
+        heatmap
     )
 
     minimum = heatmap.min()
@@ -706,13 +768,11 @@ def normalize_heatmap(heatmap):
             dtype=np.float32
         )
 
-    heatmap = (
+    return (
         heatmap - minimum
     ) / (
         maximum - minimum
     )
-
-    return heatmap
 
 
 # ============================================================
@@ -725,36 +785,25 @@ def create_colored_heatmap(heatmap):
         heatmap
     )
 
-    # JET-LIKE COLOR MAPPING
-    # Low activation = blue
-    # Medium activation = green/yellow
-    # High activation = red
-
     red = np.clip(
-        1.5 - np.abs(
-            4 * heatmap - 3
-        ),
+        1.5 - np.abs(4 * heatmap - 3),
         0,
         1
     )
 
     green = np.clip(
-        1.5 - np.abs(
-            4 * heatmap - 2
-        ),
+        1.5 - np.abs(4 * heatmap - 2),
         0,
         1
     )
 
     blue = np.clip(
-        1.5 - np.abs(
-            4 * heatmap - 1
-        ),
+        1.5 - np.abs(4 * heatmap - 1),
         0,
         1
     )
 
-    colored_heatmap = np.stack(
+    colored = np.stack(
         [
             red,
             green,
@@ -763,12 +812,14 @@ def create_colored_heatmap(heatmap):
         axis=-1
     )
 
-    colored_heatmap = (
-        colored_heatmap * 255
-    ).astype(np.uint8)
+    colored = (
+        colored * 255
+    ).astype(
+        np.uint8
+    )
 
     return Image.fromarray(
-        colored_heatmap
+        colored
     )
 
 
@@ -788,10 +839,8 @@ def make_heatmap_overlay(
 
     original_array = np.asarray(
         original_image
-    ).astype(np.float32)
-
-    heatmap = normalize_heatmap(
-        heatmap
+    ).astype(
+        np.float32
     )
 
     colored_heatmap = create_colored_heatmap(
@@ -804,7 +853,9 @@ def make_heatmap_overlay(
 
     heatmap_array = np.asarray(
         colored_heatmap
-    ).astype(np.float32)
+    ).astype(
+        np.float32
+    )
 
     overlay = (
         (1 - alpha) * original_array +
@@ -815,15 +866,15 @@ def make_heatmap_overlay(
         overlay,
         0,
         255
-    ).astype(np.uint8)
-
-    overlay_image = Image.fromarray(
-        overlay
+    ).astype(
+        np.uint8
     )
 
     return (
         colored_heatmap,
-        overlay_image
+        Image.fromarray(
+            overlay
+        )
     )
 
 
@@ -848,7 +899,7 @@ class GradCAM:
         self.gradients = None
 
         self.forward_handle = (
-            self.target_layer.register_forward_hook(
+            target_layer.register_forward_hook(
                 self.forward_hook
             )
         )
@@ -860,8 +911,6 @@ class GradCAM:
         output
     ):
 
-        # Handle tuple/list outputs safely
-
         if isinstance(
             output,
             (tuple, list)
@@ -871,18 +920,11 @@ class GradCAM:
 
         self.activations = output
 
-        # Capture gradients directly from tensor
+        if output.requires_grad:
 
-        if isinstance(
-            output,
-            torch.Tensor
-        ):
-
-            if output.requires_grad:
-
-                output.register_hook(
-                    self.gradient_hook
-                )
+            output.register_hook(
+                self.gradient_hook
+            )
 
     def gradient_hook(
         self,
@@ -911,8 +953,6 @@ class GradCAM:
             input_tensor
         )
 
-        # Handle model output tuple/list
-
         if isinstance(
             output,
             (tuple, list)
@@ -926,14 +966,14 @@ class GradCAM:
         ):
 
             raise TypeError(
-                "Model output is not a Tensor."
+                "Model output must be a Tensor."
             )
 
         if output.ndim != 2:
 
             raise ValueError(
-                "Grad-CAM requires classification output "
-                "with shape [batch, classes]."
+                f"Expected 2D classification output. "
+                f"Received shape: {output.shape}"
             )
 
         if target_class is None:
@@ -947,43 +987,37 @@ class GradCAM:
             target_class
         ]
 
-        score.backward(
-            retain_graph=False
-        )
+        score.backward()
 
         if self.activations is None:
 
             raise RuntimeError(
-                "Grad-CAM activations were not captured."
+                "Grad-CAM activation was not captured."
             )
 
         if self.gradients is None:
 
             raise RuntimeError(
-                "Grad-CAM gradients were not captured."
+                "Grad-CAM gradient was not captured."
             )
 
         activations = self.activations
 
         gradients = self.gradients
 
-        # Both must be 4D feature maps
-
         if activations.ndim != 4:
 
             raise ValueError(
-                f"Activation shape incorrect: "
+                f"Invalid activation dimensions: "
                 f"{activations.shape}"
             )
 
         if gradients.ndim != 4:
 
             raise ValueError(
-                f"Gradient shape incorrect: "
+                f"Invalid gradient dimensions: "
                 f"{gradients.shape}"
             )
-
-        # Channel-wise gradient importance
 
         weights = gradients.mean(
             dim=(2, 3),
@@ -1023,14 +1057,7 @@ class GradCAM:
         self.forward_handle.remove()
 
 
-# ============================================================
-# 18. GRAD-CAM EXECUTION
-# ============================================================
-
-def generate_gradcam(
-    image_tensor,
-    target_class=None
-):
+def generate_gradcam(image_tensor):
 
     try:
 
@@ -1044,8 +1071,7 @@ def generate_gradcam(
         )
 
         cam = gradcam.generate(
-            image_tensor,
-            target_class
+            image_tensor
         )
 
         gradcam.remove_hooks()
@@ -1058,7 +1084,7 @@ def generate_gradcam(
 
 
 # ============================================================
-# 19. IMAGE DIFFERENCE
+# 18. PERTURBATION MAP
 # ============================================================
 
 def calculate_difference(
@@ -1068,30 +1094,32 @@ def calculate_difference(
 
     clean_array = np.asarray(
         clean_image
-    ).astype(np.float32)
+    ).astype(
+        np.float32
+    )
 
     attacked_array = np.asarray(
         attacked_image
-    ).astype(np.float32)
+    ).astype(
+        np.float32
+    )
 
     difference = np.abs(
-        attacked_array -
-        clean_array
+        clean_array -
+        attacked_array
     )
 
     difference = difference.mean(
         axis=2
     )
 
-    difference = normalize_heatmap(
+    return normalize_heatmap(
         difference
     )
 
-    return difference
-
 
 # ============================================================
-# 20. APPLICATION HEADER
+# 19. HEADER
 # ============================================================
 
 st.markdown(
@@ -1102,8 +1130,7 @@ st.markdown(
 st.markdown(
     """
     <div class="subtitle">
-    Explainable Adversarial Analytics for
-    Facial Biometric Security
+    Explainable Adversarial Analytics for Facial Biometric Security
     </div>
     """,
     unsafe_allow_html=True
@@ -1111,7 +1138,7 @@ st.markdown(
 
 
 # ============================================================
-# 21. SIDEBAR
+# 20. SIDEBAR
 # ============================================================
 
 st.sidebar.title(
@@ -1119,11 +1146,11 @@ st.sidebar.title(
 )
 
 st.sidebar.write(
-    f"Device: **{DEVICE}**"
+    f"Device: {DEVICE}"
 )
 
 st.sidebar.write(
-    f"Image Size: **{IMAGE_SIZE} × {IMAGE_SIZE}**"
+    f"Image Size: {IMAGE_SIZE} × {IMAGE_SIZE}"
 )
 
 st.sidebar.divider()
@@ -1140,11 +1167,11 @@ if victim_status:
 
 else:
 
-    st.sidebar.warning(
+    st.sidebar.error(
         "Victim Model Not Loaded"
     )
 
-    st.sidebar.caption(
+    st.sidebar.code(
         victim_message
     )
 
@@ -1156,39 +1183,44 @@ if exa_status:
 
 else:
 
-    st.sidebar.warning(
+    st.sidebar.error(
         "EXA-Guard Model Not Loaded"
     )
 
-    st.sidebar.caption(
+    st.sidebar.code(
         exa_message
+    )
+
+    st.sidebar.write(
+        "Checkpoint path:"
+    )
+
+    st.sidebar.code(
+        str(EXA_CHECKPOINT)
+    )
+
+    st.sidebar.write(
+        "File exists:",
+        EXA_CHECKPOINT.exists()
     )
 
 
 # ============================================================
-# 22. MAIN INFORMATION
+# 21. RESEARCH NOTICE
 # ============================================================
 
-st.markdown(
+st.info(
     """
-    <div class="info-box">
-
-    <b>Research Demonstration:</b>
-
-    This application demonstrates adversarial attack generation,
+    Research prototype demonstrating adversarial attack generation,
     attack detection, spatial localization and explainability.
 
-    Model outputs are meaningful only when trained checkpoints
-    are available and correctly matched to the architecture.
-
-    </div>
-    """,
-    unsafe_allow_html=True
+    Outputs are dependent on the availability of trained checkpoints.
+    """
 )
 
 
 # ============================================================
-# 23. IMAGE UPLOAD
+# 22. IMAGE UPLOAD
 # ============================================================
 
 st.markdown(
@@ -1197,7 +1229,7 @@ st.markdown(
 )
 
 uploaded_file = st.file_uploader(
-    "Upload an image",
+    "Choose an image",
     type=[
         "jpg",
         "jpeg",
@@ -1207,7 +1239,7 @@ uploaded_file = st.file_uploader(
 
 
 # ============================================================
-# 24. ATTACK SELECTION
+# 23. ATTACK SELECTOR
 # ============================================================
 
 attack_name = st.selectbox(
@@ -1222,7 +1254,7 @@ attack_name = st.selectbox(
 
 
 # ============================================================
-# 25. PROCESS IMAGE
+# 24. MAIN PROCESSING
 # ============================================================
 
 if uploaded_file is not None:
@@ -1231,12 +1263,16 @@ if uploaded_file is not None:
 
         original_image = Image.open(
             uploaded_file
-        ).convert("RGB")
+        ).convert(
+            "RGB"
+        )
+
+        image_tensor = image_to_tensor(
+            original_image
+        )
 
         st.markdown(
-            '<div class="section-title">'
-            'Original Image'
-            '</div>',
+            '<div class="section-title">Original Image</div>',
             unsafe_allow_html=True
         )
 
@@ -1245,11 +1281,7 @@ if uploaded_file is not None:
             width=350
         )
 
-        image_tensor = image_to_tensor(
-            original_image
-        )
-
-        # Generate attacked image
+        # Generate attack
 
         attacked_tensor = apply_attack(
             image_tensor,
@@ -1260,9 +1292,9 @@ if uploaded_file is not None:
             attacked_tensor
         )
 
-        # ====================================================
-        # 26. CLEAN VS ATTACKED COMPARISON
-        # ====================================================
+        # ----------------------------------------------------
+        # CLEAN VS ATTACKED
+        # ----------------------------------------------------
 
         st.markdown(
             '<div class="section-title">'
@@ -1289,7 +1321,7 @@ if uploaded_file is not None:
         with col2:
 
             st.subheader(
-                f"{attack_name} Image"
+                attack_name
             )
 
             st.image(
@@ -1297,9 +1329,9 @@ if uploaded_file is not None:
                 use_container_width=True
             )
 
-        # ====================================================
-        # 27. VICTIM MODEL
-        # ====================================================
+        # ----------------------------------------------------
+        # VICTIM MODEL
+        # ----------------------------------------------------
 
         st.markdown(
             '<div class="section-title">'
@@ -1310,13 +1342,13 @@ if uploaded_file is not None:
 
         if victim_status:
 
-            clean_prediction, clean_confidence, _ = (
+            clean_prediction, clean_confidence = (
                 get_victim_prediction(
                     image_tensor
                 )
             )
 
-            attacked_prediction, attacked_confidence, _ = (
+            attacked_prediction, attacked_confidence = (
                 get_victim_prediction(
                     attacked_tensor
                 )
@@ -1348,27 +1380,25 @@ if uploaded_file is not None:
             if clean_prediction != attacked_prediction:
 
                 st.error(
-                    "Victim model prediction changed "
-                    "after attack."
+                    "Prediction changed after attack."
                 )
 
             else:
 
-                st.info(
-                    "Victim model prediction remained unchanged."
+                st.success(
+                    "Prediction remained unchanged."
                 )
 
         else:
 
             st.warning(
-                "Victim checkpoint is unavailable. "
-                "Predictions are not displayed because "
-                "the model may be untrained."
+                "Victim checkpoint unavailable. "
+                "Prediction results cannot be displayed."
             )
 
-        # ====================================================
-        # 28. EXA-GUARD ANALYSIS
-        # ====================================================
+        # ----------------------------------------------------
+        # EXA-GUARD
+        # ----------------------------------------------------
 
         st.markdown(
             '<div class="section-title">'
@@ -1379,7 +1409,7 @@ if uploaded_file is not None:
 
         if exa_status:
 
-            attack_probability, predicted_attack, localization_map = (
+            attack_probability, localization_map = (
                 get_exa_guard_prediction(
                     attacked_tensor
                 )
@@ -1396,7 +1426,7 @@ if uploaded_file is not None:
 
             with col2:
 
-                if predicted_attack == 1:
+                if attack_probability >= 0.5:
 
                     st.error(
                         "Adversarial Attack Detected"
@@ -1408,21 +1438,15 @@ if uploaded_file is not None:
                         "Clean Image Detected"
                     )
 
-            # =================================================
-            # 29. SPATIAL ATTACK LOCALIZATION
-            # =================================================
+            # ------------------------------------------------
+            # SPATIAL LOCALIZATION
+            # ------------------------------------------------
 
             st.markdown(
                 '<div class="section-title">'
                 'Spatial Attack Localization'
                 '</div>',
                 unsafe_allow_html=True
-            )
-
-            localization_map = (
-                localization_map.detach()
-                .cpu()
-                .numpy()
             )
 
             localization_map = normalize_heatmap(
@@ -1453,7 +1477,7 @@ if uploaded_file is not None:
             with col2:
 
                 st.subheader(
-                    "Colored Localization Heatmap"
+                    "Colored Heatmap"
                 )
 
                 st.image(
@@ -1473,22 +1497,21 @@ if uploaded_file is not None:
                 )
 
             st.caption(
-                "Blue indicates lower activation, "
-                "green/yellow indicates intermediate activation, "
-                "and red indicates higher activation."
+                "Blue: lower activation | Green/Yellow: "
+                "intermediate activation | Red: higher activation"
             )
 
         else:
 
-            st.warning(
+            st.error(
                 "EXA-Guard checkpoint is unavailable. "
-                "Spatial localization results cannot "
-                "be considered trained model outputs."
+                "Spatial localization results cannot be "
+                "considered trained model outputs."
             )
 
-        # ====================================================
-        # 30. GRAD-CAM
-        # ====================================================
+        # ----------------------------------------------------
+        # GRAD-CAM
+        # ----------------------------------------------------
 
         st.markdown(
             '<div class="section-title">'
@@ -1558,13 +1581,12 @@ if uploaded_file is not None:
         else:
 
             st.warning(
-                "Grad-CAM cannot be generated without "
-                "a valid victim model checkpoint."
+                "Grad-CAM requires a loaded victim model."
             )
 
-        # ====================================================
-        # 31. IMAGE DIFFERENCE
-        # ====================================================
+        # ----------------------------------------------------
+        # PERTURBATION ANALYSIS
+        # ----------------------------------------------------
 
         st.markdown(
             '<div class="section-title">'
@@ -1580,11 +1602,17 @@ if uploaded_file is not None:
             attacked_image
         )
 
-        difference_heatmap = (
-            create_colored_heatmap(
-                difference_map
-            )
+        difference_heatmap = create_colored_heatmap(
+            difference_map
         )
+
+        difference_overlay = make_heatmap_overlay(
+            tensor_to_image(
+                image_tensor
+            ),
+            difference_map,
+            alpha=0.5
+        )[1]
 
         col1, col2 = st.columns(2)
 
@@ -1601,16 +1629,6 @@ if uploaded_file is not None:
 
         with col2:
 
-            difference_overlay = (
-                make_heatmap_overlay(
-                    tensor_to_image(
-                        image_tensor
-                    ),
-                    difference_map,
-                    alpha=0.5
-                )[1]
-            )
-
             st.subheader(
                 "Perturbation Overlay"
             )
@@ -1620,9 +1638,9 @@ if uploaded_file is not None:
                 use_container_width=True
             )
 
-        # ====================================================
-        # 32. TECHNICAL INFORMATION
-        # ====================================================
+        # ----------------------------------------------------
+        # ATTACK CONFIGURATION
+        # ----------------------------------------------------
 
         st.markdown(
             '<div class="section-title">'
@@ -1634,25 +1652,21 @@ if uploaded_file is not None:
         if attack_name == "FGSM":
 
             st.write(
-                f"FGSM Epsilon: {FGSM_EPSILON:.5f}"
-            )
-
-            st.write(
-                f"FGSM Epsilon: {FGSM_EPSILON * 255:.0f}/255"
+                f"Epsilon: {FGSM_EPSILON * 255:.0f}/255"
             )
 
         elif attack_name == "PGD":
 
             st.write(
-                f"PGD Epsilon: {PGD_EPSILON * 255:.0f}/255"
+                f"Epsilon: {PGD_EPSILON * 255:.0f}/255"
             )
 
             st.write(
-                f"PGD Alpha: {PGD_ALPHA * 255:.0f}/255"
+                f"Alpha: {PGD_ALPHA * 255:.0f}/255"
             )
 
             st.write(
-                f"PGD Steps: {PGD_STEPS}"
+                f"Iterations: {PGD_STEPS}"
             )
 
         elif attack_name == "Patch Attack":
@@ -1662,13 +1676,13 @@ if uploaded_file is not None:
             )
 
             st.write(
-                "Patch Type: Fixed simulated patch"
+                "Attack Type: Fixed simulated patch"
             )
 
         else:
 
             st.write(
-                "No adversarial perturbation applied."
+                "No attack applied."
             )
 
     except Exception as e:
@@ -1683,7 +1697,7 @@ if uploaded_file is not None:
 
 
 # ============================================================
-# 33. FOOTER
+# 25. FOOTER
 # ============================================================
 
 st.divider()
