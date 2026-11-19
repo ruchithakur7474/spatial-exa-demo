@@ -24,7 +24,7 @@ from torchvision.models import resnet18
 
 st.set_page_config(
     page_title="EXA-Guard",
-    page_icon="🔍",
+    page_icon="👤",
     layout="wide"
 )
 
