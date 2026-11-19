@@ -23,7 +23,7 @@ from torchvision.models import resnet18
 # ============================================================
 
 st.set_page_config(
-    page_title="👤EXA-Guard",
+    page_title="EXA-Guard",
     page_icon="👤",
     layout="wide"
 )
@@ -1039,7 +1039,7 @@ def calculate_difference(clean_image, attacked_image):
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">EXA-GUARD</div>',
+    '<div class="main-title">👤EXA-GUARD</div>',
     unsafe_allow_html=True
 )
 
