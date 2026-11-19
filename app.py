@@ -132,24 +132,18 @@ def tensor_to_image(tensor):
 # ============================================================
 
 class VictimModel(nn.Module):
-
     def __init__(self, num_classes=NUM_CLASSES):
-
         super().__init__()
 
-        self.model = resnet18(
-            weights=None
-        )
+        self.backbone = resnet18(weights=None)
 
-        self.model.fc = nn.Linear(
-            self.model.fc.in_features,
+        self.backbone.fc = nn.Linear(
+            self.backbone.fc.in_features,
             num_classes
         )
 
     def forward(self, x):
-
-        return self.model(x)
-
+        return self.backbone(x)
 
 # ============================================================
 # 5. EXA-GUARD MODEL
