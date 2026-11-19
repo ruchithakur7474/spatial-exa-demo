@@ -1,5 +1,5 @@
 # ============================================================
-#👤 EXA-GUARD
+# EXA-GUARD
 # Explainable Adversarial Analytics for Facial Biometrics
 # ============================================================
 
@@ -23,7 +23,7 @@ from torchvision.models import resnet18
 # ============================================================
 
 st.set_page_config(
-    page_title="EXA-Guard",
+    page_title="👤EXA-Guard",
     page_icon="👤",
     layout="wide"
 )
